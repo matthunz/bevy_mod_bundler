@@ -1,14 +1,35 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+use bevy::{ecs::system::EntityCommands, prelude::*};
+use std::sync::Arc;
+
+pub struct Bundler {
+    spawn_fn: Arc<dyn Fn(EntityCommands) + Send + Sync>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl Default for Bundler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl Bundler {
+    pub fn new() -> Self {
+        Self {
+            spawn_fn: Arc::new(|_| {}),
+        }
+    }
+
+    pub fn insert<B>(&mut self, bundle: B)
+    where
+        B: Bundle + Clone,
+    {
+        let f = self.spawn_fn.clone();
+        self.spawn_fn = Arc::new(move |mut entity_commands| {
+            entity_commands.insert(bundle.clone());
+            (f)(entity_commands);
+        });
+    }
+
+    pub fn spawn(&self, entity_commands: EntityCommands) {
+        (self.spawn_fn)(entity_commands)
     }
 }
