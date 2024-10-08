@@ -1,5 +1,5 @@
 use bevy::{ecs::system::EntityCommands, prelude::*, utils::hashbrown::HashMap};
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -64,7 +64,7 @@ impl Plugin for AssetPlugin {
 }
 
 #[derive(Clone, Default, Resource)]
-struct ComponentRegistry {
+pub struct ComponentRegistry {
     components: HashMap<
         String,
         Arc<dyn Fn(Value) -> Box<dyn Fn(EntityCommands) + Send + Sync> + Send + Sync>,
@@ -88,6 +88,12 @@ impl ComponentRegistry {
     }
 }
 
+#[derive(Asset, Deserialize, TypePath)]
+#[serde(transparent)]
+pub struct BundleFile {
+    components: HashMap<String, Value>,
+}
+
 #[derive(Clone, Default, Resource)]
 pub struct BundleRegistry {
     bundles: HashMap<String, Bundler>,
@@ -96,5 +102,40 @@ pub struct BundleRegistry {
 impl BundleRegistry {
     pub fn spawn(&self, name: &str, entity_commands: EntityCommands) {
         self.bundles.get(name).unwrap().spawn(entity_commands);
+    }
+
+    pub fn load(
+        &mut self,
+        component_registry: &ComponentRegistry,
+        mut bundle_file: BundleFile,
+    ) -> Bundler {
+        let name = bundle_file
+            .components
+            .remove("name")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        self.bundles.insert(name.clone(), Bundler::new());
+
+        let spawn_name = name.clone();
+        let mut spawn_fn: Arc<dyn Fn(EntityCommands) + Send + Sync> =
+            Arc::new(move |mut commands| {
+                commands.insert(Name::new(spawn_name.clone()));
+            });
+
+        for component in bundle_file.components.keys() {
+            let f = component_registry.components.get(component).unwrap();
+            let g = f(bundle_file.components[component].clone());
+            spawn_fn = Arc::new(move |mut commands| {
+                g(commands.reborrow());
+                spawn_fn(commands);
+            });
+        }
+
+        let bundler = Bundler { spawn_fn };
+        self.bundles.insert(name, bundler.clone());
+        bundler
     }
 }
